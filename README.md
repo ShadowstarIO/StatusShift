@@ -23,11 +23,13 @@ Highest priority matching rule wins. Everything else stays put until a rule says
 2. Under **Custom Plugin Repositories**, add:
 
 ```
-https://raw.githubusercontent.com/XozaShadow/StatusShift/main/repo.json
+https://raw.githubusercontent.com/XozaShadow/XIV/main/repo.json
 ```
 
 3. Save, then `/xlplugins`, search **Status Shift**, install.
 4. `/ss` to open.
+
+The same catalog lists LightsOn. Do not also add StatusShift’s own `repo.json`.
 
 Also listed in the Dalamud plugin installer when StatusShift is accepted there.
 
