@@ -6,7 +6,7 @@ StatusShift is a Dalamud plugin for Final Fantasy XIV. Rules change your **onlin
 
 Highest priority matching rule wins. Everything else stays put until a rule says otherwise. Nothing runs on the title screen or character select.
 
-**1.0.0.0** is the first public release. Older `0.1.x` GitHub tags are kept as prereleases for history.
+**0.1.0.0** is the first public live (same product as the old `1.0.0.0` zip). **0.1.0.1** is the brand line: installer author **Xoza**, catalog under Shadowstar.
 
 ## What it is for
 
@@ -23,7 +23,7 @@ Highest priority matching rule wins. Everything else stays put until a rule says
 2. Under **Custom Plugin Repositories**, add:
 
 ```
-https://raw.githubusercontent.com/XozaShadow/XIV/main/repo.json
+https://raw.githubusercontent.com/ShadowstarIO/XIV/main/repo.json
 ```
 
 3. Save, then `/xlplugins`, search **Status Shift**, install.
@@ -219,4 +219,4 @@ Windows, .NET 10, Dalamud API 15.
 dotnet build StatusShift.slnx -c Release
 ```
 
-Source: https://github.com/XozaShadow/StatusShift
+Source: https://github.com/ShadowstarIO/StatusShift
