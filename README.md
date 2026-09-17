@@ -2,11 +2,9 @@
 
 Getting tired of getting knocked out of whatever search status you put yourself in? Whether it's through travel, logging, or anything else? Here's your solution!
 
-StatusShift is a Dalamud plugin for Final Fantasy XIV. Rules change your **online status**, optional **search comment**, and optional **slash commands** from where you are, what you are doing, which job you are on, who you are playing, and what the clock says.
+StatusShift is a Dalamud plugin for Final Fantasy XIV, by **Xoza**. Rules change your **online status**, optional **search comment**, and optional **slash commands** from where you are, what you are doing, which job you are on, who you are playing, and what the clock says.
 
 Highest priority matching rule wins. Everything else stays put until a rule says otherwise. Nothing runs on the title screen or character select.
-
-**0.1.0.0** is the first public live (same product as the old `1.0.0.0` zip). **0.1.0.1** is the brand line: installer author **Xoza**, catalog under Shadowstar.
 
 ## What it is for
 
@@ -30,8 +28,6 @@ https://raw.githubusercontent.com/ShadowstarIO/XIV/main/repo.json
 4. `/ss` to open.
 
 The same catalog lists LightsOn. Do not also add StatusShift’s own `repo.json`.
-
-Also listed in the Dalamud plugin installer when StatusShift is accepted there.
 
 Enable **Get plugin testing versions** in Dalamud only if you want test builds. Stable users can ignore that.
 
