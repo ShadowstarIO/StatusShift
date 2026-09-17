@@ -64,22 +64,30 @@ public class ConfigWindow : Window, IDisposable
 
         ImGui.Separator();
         ImGui.TextColored(UiTheme.Amber, "TIMERS / HANDLING");
-        var labels = ApplyModeNames.ComboLabels(false, cfg.ApplyMode);
-        var mode = ApplyModeNames.ToCombo(cfg.ApplyMode, false);
+        var labels = ApplyModeNames.ComboLabels(true, cfg.ApplyMode);
+        var mode = ApplyModeNames.ToCombo(cfg.ApplyMode, true);
         if (ImGui.Combo("Handling Mode", ref mode, labels, labels.Length))
         {
-            cfg.ApplyMode = ApplyModeNames.FromCombo(mode, false, cfg.ApplyMode);
-            if (cfg.ApplyMode == ApplyMode.Auto)
-                cfg.ApplyMode = ApplyMode.Selector;
+            cfg.ApplyMode = ApplyModeNames.FromCombo(mode, true, cfg.ApplyMode);
             cfg.Save();
             plugin.RequestEval();
         }
         ImGui.TextDisabled(cfg.ApplyMode switch
         {
+            ApplyMode.Auto => "Applies the highest matching rule.",
             ApplyMode.Off => "No timers, popups, or notifications.",
-            ApplyMode.Selector => "Opens a list of matching rules. Click a name to send one command.",
-            _ => "Chat / toast / sound only. /ss apply or Check Now sends one command.",
+            ApplyMode.Selector => "Opens a list of matching rules. Click one to apply.",
+            _ => "Chat / toast / sound only. Use /ss apply to set.",
         });
+        if (cfg.ApplyMode == ApplyMode.Auto)
+        {
+            var cooldown = cfg.CooldownSeconds;
+            if (ImGui.SliderInt("Auto (s)", ref cooldown, 5, 180))
+            {
+                cfg.CooldownSeconds = cooldown;
+                cfg.Save();
+            }
+        }
         if (cfg.ApplyMode != ApplyMode.Off)
         {
             var poll = cfg.PollSeconds;

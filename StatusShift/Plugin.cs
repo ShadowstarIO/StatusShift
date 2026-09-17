@@ -55,17 +55,15 @@ public sealed partial class Plugin : IDalamudPlugin
     private string? pendingRuleId;
     private string? lastSelectorKey;
     private bool paused;
+    private DateTime? testRevertAt;
+    private string? testRevertRuleId;
+
     public string LastAppliedComment => lastAppliedComment;
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         RuleStore.Load(Configuration);
-        if (Configuration.ApplyMode == ApplyMode.Auto)
-        {
-            Configuration.ApplyMode = ApplyMode.Selector;
-            Configuration.Save();
-        }
         engine = new RuleEngine(Configuration);
 
         configWindow = new ConfigWindow(this);
@@ -266,11 +264,15 @@ public sealed partial class Plugin : IDalamudPlugin
         if (stage == RuleTestStage.RevertNow)
         {
             ApplyFallback(rule, ignoreCooldown: true);
-            return "Ran WHEN RULE STOPS MATCHING (one command).";
+            testRevertAt = null;
+            testRevertRuleId = null;
+            return "Ran WHEN RULE STOPS MATCHING.";
         }
 
         TryApply(rule, force: true);
-        return "Applied one command. Use Test on WHEN RULE STOPS MATCHING to send the fallback.";
+        testRevertAt = DateTime.Now.AddSeconds(5);
+        testRevertRuleId = rule.Id;
+        return "Applied. Reverts in 5 seconds as if the rule stopped matching.";
     }
 
     public CommentTemplate AddCommentTemplate(string title, string body)
@@ -289,50 +291,71 @@ public sealed partial class Plugin : IDalamudPlugin
     private bool ApplyValues(StatusRule rule, string comment, bool force)
     {
         if (!CharacterReady) return false;
-        var slash = OneSlash(rule, fallback: false);
-        if (slash is null)
-        {
-            Notify($"[{rule.Name}] has nothing to send (pick Status, Comment, or Command).");
-            return false;
-        }
+        var command = rule.Command?.Trim() ?? string.Empty;
+        if (!force && comment == lastAppliedComment && rule.OnlineStatus == lastAppliedStatus && command == lastAppliedCommand && lastMatchedRuleId == rule.Id)
+            return MaybeRerunCommand(rule, force);
 
-        var ok = ChatSender.TrySendCommand(slash);
+        var ok = true;
+        if (rule.ChangeSearchComment && !string.IsNullOrWhiteSpace(comment))
+            ok &= ChatSender.TrySendCommand($"/searchcomment {SearchComments.Clamp(comment)}");
+
+        var statusCmd = ChatSender.ToStatusCommand(rule.OnlineStatus);
+        if (statusCmd is not null)
+            ok &= ChatSender.TrySendCommand(statusCmd);
+
+        if (rule.HasCommand)
+            ok &= TrySendRuleCommand(rule, force, allowSelf: true);
+
         if (ok)
         {
             lastAppliedComment = comment;
             lastAppliedStatus = rule.OnlineStatus;
-            lastAppliedCommand = rule.Command?.Trim() ?? string.Empty;
+            lastAppliedCommand = command;
             lastMatchedRuleId = rule.Id;
             lastApply = DateTime.Now;
-            Notify($"Applied [{rule.Name}]: {slash}");
+            Notify(rule.ChangeSearchComment ? $"Applied [{rule.Name}]: {comment}" : $"Applied [{rule.Name}]");
         }
         else Notify($"Failed to apply [{rule.Name}].");
 
         return ok;
     }
 
-    private string? OneSlash(StatusRule rule, bool fallback)
+    private bool MaybeRerunCommand(StatusRule rule, bool force)
     {
-        switch (rule.EffectiveThen(fallback))
+        if (!rule.HasCommand) return false;
+        return TrySendRuleCommand(rule, force, allowSelf: false);
+    }
+
+    private bool TrySendRuleCommand(StatusRule rule, bool force, bool allowSelf)
+    {
+        var command = rule.Command.Trim();
+        if (!command.StartsWith('/')) command = "/" + command;
+        command = CommandTokens.Resolve(command, engine.Snapshot(), LiveLook.Capture(Configuration.NearbyRange));
+
+        if (IsSelfCommand(command, out var selfKey))
         {
-            case ThenSend.Comment:
-            {
-                var text = fallback ? engine.ResolveFallbackComment(rule) : engine.ResolveComment(rule);
-                if (string.IsNullOrWhiteSpace(text)) return null;
-                return "/searchcomment " + SearchComments.Clamp(text);
-            }
-            case ThenSend.Command:
-            {
-                var cmd = (fallback ? rule.FallbackCommand : rule.Command)?.Trim() ?? string.Empty;
-                if (cmd.Length == 0) return null;
-                if (!cmd.StartsWith('/')) cmd = "/" + cmd;
-                cmd = CommandTokens.Resolve(cmd, engine.Snapshot(), LiveLook.Capture(Configuration.NearbyRange));
-                if (IsSelfCommand(cmd, out _)) return null;
-                return cmd;
-            }
-            default:
-                return ChatSender.ToStatusCommand(fallback ? rule.FallbackStatus : rule.OnlineStatus);
+            if (!allowSelf) return true;
+            if (selfKey is "apply" or "now" or "update")
+                return true;
+            Notify($"Ignored Status Shift command on [{rule.Name}].");
+            return true;
         }
+
+        var interval = rule.EffectiveCommandInterval(Configuration.PollSeconds);
+        var first = lastCommandRuleId != rule.Id;
+        if (!force && !first)
+        {
+            if (interval <= 0) return true;
+            if ((DateTime.Now - lastCommandAt).TotalSeconds < interval) return true;
+        }
+
+        var ok = ChatSender.TrySendCommand(command);
+        if (ok)
+        {
+            lastCommandAt = DateTime.Now;
+            lastCommandRuleId = rule.Id;
+        }
+        return ok;
     }
 
     private static bool IsSelfCommand(string command, out string key)
@@ -382,9 +405,9 @@ public sealed partial class Plugin : IDalamudPlugin
                 Evaluate(forceNotice: true, fromEvent: true);
                 break;
             case "auto":
-                Configuration.ApplyMode = ApplyMode.Selector;
+                Configuration.ApplyMode = ApplyMode.Auto;
                 Configuration.Save();
-                Notify("Auto is not available (one command per click). Handling: Selector");
+                Notify("Apply mode: Auto");
                 Evaluate(forceNotice: true, fromEvent: true);
                 break;
             case "confirm":
@@ -429,7 +452,7 @@ public sealed partial class Plugin : IDalamudPlugin
         Notify("/ss now — preview match, do not apply");
         Notify("/ss pause [seconds] — pause all rules; 120 = 2 min");
         Notify("/ss resume — resume rules");
-        Notify("/ss auto | notifications | selector | off — set handling (auto becomes selector)");
+        Notify("/ss auto | notifications | selector | off — set handling");
         Notify("/ss zone — print current place");
         Notify("/ss config — settings");
     }
@@ -453,6 +476,8 @@ public sealed partial class Plugin : IDalamudPlugin
         lastSelectorKey = null;
         pendingRuleId = null;
         lastFingerprint = string.Empty;
+        testRevertAt = null;
+        testRevertRuleId = null;
         lastAppliedComment = string.Empty;
         lastAppliedStatus = OnlineStatusAction.LeaveAlone;
         lastAppliedCommand = string.Empty;
@@ -478,6 +503,14 @@ public sealed partial class Plugin : IDalamudPlugin
         }
 
         if (!Configuration.Enabled || paused) return;
+        if (testRevertAt is DateTime when && DateTime.Now >= when)
+        {
+            testRevertAt = null;
+            var testRule = Configuration.Rules.Find(r => r.Id == testRevertRuleId);
+            testRevertRuleId = null;
+            if (testRule is not null)
+                ApplyFallback(testRule, ignoreCooldown: true);
+        }
 
         if (Configuration.ApplyMode == ApplyMode.Off) return;
 
@@ -514,7 +547,7 @@ public sealed partial class Plugin : IDalamudPlugin
         {
             TryRevert();
             lastCommandRuleId = null;
-            if (Configuration.ApplyMode == ApplyMode.Selector || Configuration.ApplyMode == ApplyMode.Auto)
+            if (Configuration.ApplyMode == ApplyMode.Selector)
             {
                 var potential = engine.FindPotentialMatches();
                 if (potential.Count == 0)
@@ -548,10 +581,12 @@ public sealed partial class Plugin : IDalamudPlugin
         var comment = rule.ChangeSearchComment ? engine.ResolveComment(rule) : string.Empty;
         var command = rule.Command?.Trim() ?? string.Empty;
         var changed = comment != lastAppliedComment || rule.OnlineStatus != lastAppliedStatus || command != lastAppliedCommand || lastMatchedRuleId != rule.Id;
+        var dueCommand = rule.HasCommand && rule.RerunCommand && lastCommandRuleId == rule.Id
+            && (DateTime.Now - lastCommandAt).TotalSeconds >= rule.EffectiveCommandInterval(Configuration.PollSeconds);
 
-        if (!changed && !forceNotice) return;
+        if (!changed && !dueCommand && !forceNotice) return;
 
-        if (Configuration.ApplyMode is ApplyMode.Selector or ApplyMode.Auto)
+        if (Configuration.ApplyMode == ApplyMode.Selector)
         {
             var matches = engine.FindPotentialMatches();
             var key = string.Join("|", matches.ConvertAll(r => r.Id + (r.Enabled ? "1" : "0")));
@@ -570,13 +605,30 @@ public sealed partial class Plugin : IDalamudPlugin
             return;
         }
 
-        if (changed || forceNotice)
+        if (Configuration.ApplyMode == ApplyMode.Confirm)
         {
-            Notify($"Match [{rule.Name}] — /ss apply or Check Now (one command)");
-            if (Configuration.ConfirmPing)
-                GameSounds.Play(Configuration.NotifySound);
+            if (changed || forceNotice)
+            {
+                Notify($"Match [{rule.Name}] — /ss apply");
+                if (Configuration.ConfirmPing)
+                    GameSounds.Play(Configuration.NotifySound);
+            }
+            lastMatchedRuleId = rule.Id;
+            if (dueCommand && rule.HasCommand)
+                TrySendRuleCommand(rule, force: false, allowSelf: false);
+            return;
         }
-        lastMatchedRuleId = rule.Id;
+
+        var newWinner = lastAppliedStatus == OnlineStatusAction.LeaveAlone && lastMatchedRuleId != rule.Id || lastMatchedRuleId != rule.Id;
+        if (changed && !newWinner && (DateTime.Now - lastApply).TotalSeconds < Math.Max(5, Configuration.CooldownSeconds)
+            && lastApply != DateTime.MinValue)
+        {
+            if (dueCommand) TrySendRuleCommand(rule, force: false, allowSelf: false);
+            return;
+        }
+
+        if (changed) TryApply(rule);
+        else if (dueCommand) TrySendRuleCommand(rule, force: false, allowSelf: false);
     }
 
     private void TryRevert()
@@ -584,8 +636,11 @@ public sealed partial class Plugin : IDalamudPlugin
         if (lastMatchedRuleId is null) return;
         var previous = Configuration.Rules.Find(r => r.Id == lastMatchedRuleId);
         lastMatchedRuleId = null;
-        if (previous is null) return;
-        Notify($"[{previous.Name}] no longer matches. Apply another rule if you want a fallback.");
+        if (previous is null || !previous.RevertWhenFalse) return;
+        if ((DateTime.Now - lastApply).TotalSeconds < Math.Max(5, Configuration.CooldownSeconds)
+            && Configuration.ApplyMode == ApplyMode.Auto && lastApply != DateTime.MinValue)
+            return;
+        ApplyFallback(previous, ignoreCooldown: false);
     }
 
     internal void ApplyFallback(StatusRule previous, bool ignoreCooldown)
@@ -593,24 +648,36 @@ public sealed partial class Plugin : IDalamudPlugin
         if (!CharacterReady) return;
         if (!previous.RevertWhenFalse)
         {
-            Notify($"[{previous.Name}] keep — nothing sent.");
+            Notify($"[{previous.Name}] keep — nothing reverted.");
             return;
         }
 
-        var slash = OneSlash(previous, fallback: true);
-        if (slash is null)
-        {
-            Notify($"[{previous.Name}] fallback has nothing to send.");
+        if (!ignoreCooldown
+            && (DateTime.Now - lastApply).TotalSeconds < Math.Max(5, Configuration.CooldownSeconds)
+            && Configuration.ApplyMode == ApplyMode.Auto && lastApply != DateTime.MinValue)
             return;
-        }
 
         lastMatchedRuleId = null;
-        lastAppliedComment = previous.ChangeFallbackComment ? SearchComments.Clamp(engine.ResolveFallbackComment(previous)) : string.Empty;
+        var comment = previous.ChangeFallbackComment ? SearchComments.Clamp(engine.ResolveFallbackComment(previous)) : string.Empty;
+        lastAppliedComment = comment;
         lastAppliedStatus = previous.FallbackStatus;
         lastAppliedCommand = previous.FallbackCommand ?? string.Empty;
         lastApply = DateTime.Now;
-        ChatSender.TrySendCommand(slash);
-        Notify($"Applied [{previous.Name} fallback]: {slash}");
+
+        if (previous.ChangeFallbackComment && !string.IsNullOrWhiteSpace(comment))
+            ChatSender.TrySendCommand($"/searchcomment {comment}");
+        var statusCmd = ChatSender.ToStatusCommand(previous.FallbackStatus);
+        if (statusCmd is not null)
+            ChatSender.TrySendCommand(statusCmd);
+        if (!string.IsNullOrWhiteSpace(previous.FallbackCommand))
+        {
+            var fb = previous.FallbackCommand.Trim();
+            if (!fb.StartsWith('/')) fb = "/" + fb;
+            fb = CommandTokens.Resolve(fb, engine.Snapshot(), LiveLook.Capture(Configuration.NearbyRange));
+            if (!IsSelfCommand(fb, out _))
+                ChatSender.TrySendCommand(fb);
+        }
+        Notify($"Applied [{previous.Name} fallback]");
     }
 
     private void Notify(string message)
